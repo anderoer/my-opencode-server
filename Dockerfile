@@ -13,8 +13,9 @@ WORKDIR /app
 COPY start.sh /app/start.sh
 RUN chmod +x /app/start.sh
 
-# Listen on port specified by Railway (default 2222)
-ENV OPENCODE_PORT=${OPENCODE_PORT:-2222}
-EXPOSE 2222
+# Listen on Railway PORT (auto-detected from PORT env var)
+# Default to 2222 if PORT not set
+ENV PORT=${PORT:-2222}
+EXPOSE ${PORT}
 
 CMD ["/app/start.sh"]

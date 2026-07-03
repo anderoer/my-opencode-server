@@ -7,11 +7,5 @@
     "startCommand": "/app/start.sh",
     "restartPolicyMaxRetries": 5,
     "restartPolicyWindowMs": 120000
-  },
-  "networking": {
-    "tcpProxy": {
-      "enabled": true,
-      "port": 2222
-    }
   }
 }

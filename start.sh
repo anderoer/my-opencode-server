@@ -2,9 +2,13 @@
 
 set -e
 
+# Railway PORT env var
+PORT=${PORT:-2222}
+
 echo "========================================"
-echo "  Railway TCP Proxy Setup"
+echo "  Railway HTTP Proxy Setup"
 echo "========================================"
+echo "Port: $PORT"
 echo ""
 
 # Install if needed
@@ -24,8 +28,9 @@ if ! command -v opencode >/dev/null 2>&1; then
 fi
 
 echo ""
-echo "🚀 Starting OpenCode on port 2222..."
-opencode web --port 2222 &
+echo "🚀 Starting OpenCode on port $PORT..."
+# CRITICAL: Bind to 0.0.0.0 (all interfaces) not just localhost
+opencode web --port $PORT --host 0.0.0.0 &
 OPENCODE_PID=$!
 
 sleep 3
@@ -38,16 +43,15 @@ fi
 echo "✓ OpenCode running (PID: $OPENCODE_PID)"
 echo ""
 echo "========================================"
-echo "  Railway TCP Proxy Active"
+echo "  Railway HTTP Proxy Active"
 echo "========================================"
 echo ""
-echo "✓ Railway will automatically proxy"
-echo "  your TCP connection on port 2222"
+echo "✓ OpenCode listening on:"
+echo "  http://0.0.0.0:$PORT"
 echo ""
 echo "Access Details:"
-echo "  Check Railway Networking tab for:"
-echo "  TCP Proxy Domain: shuttle.proxy.rlwy.net"
-echo "  TCP Proxy Port: XXXXX (auto-assigned)"
+echo "  Check Railway Networking for public URL"
+echo "  Railway auto-assigns: something.up.railway.app"
 echo ""
 
 wait
