@@ -30,73 +30,98 @@ if ! command -v opencode >/dev/null 2>&1; then
   echo "✓ OpenCode installed"
 fi
 
-# Configure SSH with username/password support
+# Setup SSH - AUTO DETECT sshd_config
 echo ""
 echo "🔐 Configuring SSH..."
 
-# Create SSH config
-mkdir -p /etc/ssh
+# Find sshd_config - try multiple paths
+SSHD_CONFIG=""
+for path in /etc/ssh/sshd_config /root/.ssh/sshd_config /app/sshd_config; do
+  if [ -f "$path" ]; then
+    SSHD_CONFIG="$path"
+    break
+  fi
+done
 
-# Enable password authentication
-sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config 2>/dev/null || true
-sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config 2>/dev/null || true
+# If not found, create it
+if [ -z "$SSHD_CONFIG" ]; then
+  SSHD_CONFIG="/etc/ssh/sshd_config"
+  mkdir -p $(dirname "$SSHD_CONFIG")
+  touch "$SSHD_CONFIG"
+fi
 
-# Set SSH port
-sed -i "s/#Port 22/Port $SSH_PORT/" /etc/ssh/sshd_config 2>/dev/null || true
-sed -i "s/^Port .*/Port $SSH_PORT/" /etc/ssh/sshd_config 2>/dev/null || true
+echo "Using SSH config: $SSHD_CONFIG"
 
-# Allow root login with password
-echo "PermitRootLogin yes" >> /etc/ssh/sshd_config 2>/dev/null || true
+# Configure SSH (safe way)
+{
+  echo "Port $SSH_PORT"
+  echo "PermitRootLogin yes"
+  echo "PasswordAuthentication yes"
+  echo "PubkeyAuthentication yes"
+  echo "PermitEmptyPasswords no"
+  echo "UsePAM yes"
+  echo "X11Forwarding no"
+  echo "PrintMotd no"
+} > "$SSHD_CONFIG"
 
-# Start SSH daemon
+# Create /run/sshd if missing
+mkdir -p /run/sshd
+
+# Start SSH with all fixes
 echo "🚀 Starting SSH server on port $SSH_PORT..."
-/usr/sbin/sshd -D &
-SSH_PID=$!
+
+# Kill any existing sshd
+pkill -9 sshd 2>/dev/null || true
 sleep 1
+
+# Start with debug info
+/usr/sbin/sshd -D -p $SSH_PORT -f "$SSHD_CONFIG" &
+SSH_PID=$!
+
+sleep 2
 
 if ! kill -0 $SSH_PID 2>/dev/null; then
   echo "❌ SSH failed to start"
+  echo "Trying alternate startup..."
+  /usr/sbin/sshd -p $SSH_PORT || true
   exit 1
 fi
+
 echo "✓ SSH server running (PID: $SSH_PID)"
+echo "  Config: $SSHD_CONFIG"
+echo "  Port: $SSH_PORT"
 
 # Start OpenCode
 echo ""
 echo "🚀 Starting OpenCode on port $PORT..."
 opencode web --port $PORT --mdns &
 OPENCODE_PID=$!
+
 sleep 3
 
 if ! kill -0 $OPENCODE_PID 2>/dev/null; then
   echo "❌ OpenCode failed to start"
   exit 1
 fi
+
 echo "✓ OpenCode running (PID: $OPENCODE_PID)"
 
 echo ""
 echo "========================================"
-echo "  Services Configuration"
+echo "  Services Ready"
 echo "========================================"
 echo ""
 echo "🌐 OpenCode:"
-echo "  URL: Check Railway dashboard"
-echo "  Port: $PORT (HTTP Proxy)"
+echo "  Check Railway dashboard for URL"
 echo ""
 echo "🔑 SSH Terminal:"
-echo "  Port: $SSH_PORT (via Bore tunnel)"
-echo "  Username: root (or create custom user)"
-echo "  Password: set with 'passwd' command"
+echo "  Config: $SSHD_CONFIG"
+echo "  Port: $SSH_PORT"
+echo "  User: root"
+echo "  Auth: password"
 echo ""
-echo "📋 To use with Bore:"
+echo "📋 Bore Tunnel (for remote access):"
 echo "  ./bore local --to bore.pub $SSH_PORT"
-echo ""
-echo "📋 To use with Termius:"
-echo "  Host: bore.pub"
-echo "  Port: (shown by bore)"
-echo "  Username: root"
-echo "  Password: (your SSH password)"
-echo ""
-echo "========================================"
 echo ""
 
 wait
