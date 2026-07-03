@@ -3,43 +3,47 @@
 set -e
 
 echo "========================================"
-echo "  OpenCode + Bore Tunnel Setup"
+echo "  OpenCode + Bore Tunnel Installer"
 echo "========================================"
+echo ""
 
-# Set password if not provided
-if [ -z "$OPENCODE_SERVER_PASSWORD" ]; then
-    export OPENCODE_SERVER_PASSWORD="changeme123"
-    echo "⚠️  WARNING: Using default password: changeme123"
-    echo "⚠️  Set OPENCODE_SERVER_PASSWORD environment variable to change"
+# Download and setup bore if not exists
+if [ ! -f ./bore ]; then
+  echo "📥 Downloading Bore..."
+  rm -f bore*
+  wget https://github.com/ekzhang/bore/releases/download/v0.6.0/bore-v0.6.0-x86_64-unknown-linux-musl.tar.gz
+  tar -xzf bore-v0.6.0-x86_64-unknown-linux-musl.tar.gz
+  rm bore-v0.6.0-x86_64-unknown-linux-musl.tar.gz
+  chmod +x bore
+  echo "✓ Bore installed"
 fi
 
-echo "🚀 Starting OpenCode Web Server..."
+# Install opencode if not exists
+if ! command -v opencode >/dev/null 2>&1; then
+  echo "📥 Installing OpenCode..."
+  curl -fsSL https://opencode.ai/install | bash
+  export PATH="$HOME/.opencode/bin:$PATH"
+  echo "✓ OpenCode installed"
+fi
+
+echo ""
+echo "🚀 Starting OpenCode Web Server (port 2222)..."
 opencode web --port 2222 &
 OPENCODE_PID=$!
 echo "✓ OpenCode PID: $OPENCODE_PID"
 
-# Wait for opencode to start
-sleep 3
+sleep 2
 
-# Check if opencode is running
 if ! kill -0 $OPENCODE_PID 2>/dev/null; then
-    echo "❌ OpenCode failed to start"
-    exit 1
+  echo "❌ OpenCode failed to start"
+  exit 1
 fi
 
-echo "🌐 Starting Bore Tunnel..."
-/tools/bore local --to bore.pub 2222 &
-BORE_PID=$!
-echo "✓ Bore PID: $BORE_PID"
-
 echo ""
-echo "========================================"
-echo "  Services Running"
-echo "========================================"
-echo "OpenCode Web: http://127.0.0.1:2222"
-echo "Bore Tunnel: <check logs below>"
+echo "🌐 Starting Bore Tunnel to bore.pub..."
 echo "========================================"
 echo ""
 
-# Keep container running
-wait $OPENCODE_PID $BORE_PID
+./bore local --to bore.pub 2222
+
+wait
