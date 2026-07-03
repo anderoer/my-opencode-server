@@ -2,17 +2,12 @@
 
 set -e
 
-# Railway PORT variable
-PORT=${PORT:-2222}
-
 echo "========================================"
-echo "  OpenCode + Railway Proxy Setup"
+echo "  Railway TCP Proxy Setup"
 echo "========================================"
-echo "Port: $PORT"
-echo "Railway Mode: ${RAILWAY_ENVIRONMENT:-local}"
 echo ""
 
-# Download and setup bore if not exists
+# Install if needed
 if [ ! -f ./bore ]; then
   echo "📥 Downloading Bore..."
   rm -f bore*
@@ -20,22 +15,18 @@ if [ ! -f ./bore ]; then
   tar -xzf bore-v0.6.0-x86_64-unknown-linux-musl.tar.gz
   rm bore-v0.6.0-x86_64-unknown-linux-musl.tar.gz
   chmod +x bore
-  echo "✓ Bore installed"
 fi
 
-# Install opencode if not exists
 if ! command -v opencode >/dev/null 2>&1; then
   echo "📥 Installing OpenCode..."
   curl -fsSL https://opencode.ai/install | bash
   export PATH="$HOME/.opencode/bin:$PATH"
-  echo "✓ OpenCode installed"
 fi
 
 echo ""
-echo "🚀 Starting OpenCode Web Server (port $PORT)..."
-opencode web --port $PORT &
+echo "🚀 Starting OpenCode on port 2222..."
+opencode web --port 2222 &
 OPENCODE_PID=$!
-echo "✓ OpenCode PID: $OPENCODE_PID"
 
 sleep 3
 
@@ -44,25 +35,19 @@ if ! kill -0 $OPENCODE_PID 2>/dev/null; then
   exit 1
 fi
 
+echo "✓ OpenCode running (PID: $OPENCODE_PID)"
 echo ""
 echo "========================================"
-echo "  ✓ Services Running"
+echo "  Railway TCP Proxy Active"
 echo "========================================"
-echo "OpenCode: http://localhost:$PORT"
+echo ""
+echo "✓ Railway will automatically proxy"
+echo "  your TCP connection on port 2222"
+echo ""
+echo "Access Details:"
+echo "  Check Railway Networking tab for:"
+echo "  TCP Proxy Domain: shuttle.proxy.rlwy.net"
+echo "  TCP Proxy Port: XXXXX (auto-assigned)"
 echo ""
 
-# Check if running on Railway
-if [ "$RAILWAY_ENVIRONMENT" = "production" ]; then
-  echo "🌐 Railway Proxy Active"
-  echo "Public URL: https://\$RAILWAY_PUBLIC_DOMAIN"
-  echo ""
-  echo "Optional: Create Bore tunnel for backup"
-  echo "./bore local --to bore.pub $PORT"
-  echo ""
-else
-  echo "🌐 Starting Bore Tunnel (local mode)..."
-  ./bore local --to bore.pub $PORT
-fi
-
-# Keep container running
 wait
