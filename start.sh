@@ -30,66 +30,59 @@ if ! command -v opencode >/dev/null 2>&1; then
   echo "✓ OpenCode installed"
 fi
 
-# Setup SSH - AUTO DETECT sshd_config
+# Setup SSH - BYPASS PAM ISSUES
 echo ""
-echo "🔐 Configuring SSH..."
+echo "🔐 Configuring SSH (Bypass PAM)..."
 
-# Find sshd_config - try multiple paths
-SSHD_CONFIG=""
-for path in /etc/ssh/sshd_config /root/.ssh/sshd_config /app/sshd_config; do
-  if [ -f "$path" ]; then
-    SSHD_CONFIG="$path"
-    break
-  fi
-done
+SSHD_CONFIG="/etc/ssh/sshd_config"
+mkdir -p $(dirname "$SSHD_CONFIG")
+mkdir -p /run/sshd
 
-# If not found, create it
-if [ -z "$SSHD_CONFIG" ]; then
-  SSHD_CONFIG="/etc/ssh/sshd_config"
-  mkdir -p $(dirname "$SSHD_CONFIG")
-  touch "$SSHD_CONFIG"
-fi
+# Create minimal SSH config that BYPASSES PAM
+cat > "$SSHD_CONFIG" << 'SSHEOF'
+Port 2222
+PermitRootLogin yes
+PasswordAuthentication yes
+PermitEmptyPasswords yes
+PubkeyAuthentication yes
+UsePAM no
+AuthenticationMethods password
+ChallengeResponseAuthentication no
+X11Forwarding no
+PrintMotd no
+Subsystem sftp /usr/lib/openssh/sftp-server
+SSHEOF
 
 echo "Using SSH config: $SSHD_CONFIG"
 
-# Configure SSH (safe way)
-{
-  echo "Port $SSH_PORT"
-  echo "PermitRootLogin yes"
-  echo "PasswordAuthentication yes"
-  echo "PubkeyAuthentication yes"
-  echo "PermitEmptyPasswords no"
-  echo "UsePAM yes"
-  echo "X11Forwarding no"
-  echo "PrintMotd no"
-} > "$SSHD_CONFIG"
-
-# Create /run/sshd if missing
-mkdir -p /run/sshd
-
-# Start SSH with all fixes
-echo "🚀 Starting SSH server on port $SSH_PORT..."
+# Generate SSH keys if missing
+if [ ! -f /etc/ssh/ssh_host_rsa_key ]; then
+  echo "  Generating SSH host keys..."
+  ssh-keygen -A
+fi
 
 # Kill any existing sshd
 pkill -9 sshd 2>/dev/null || true
 sleep 1
 
-# Start with debug info
-/usr/sbin/sshd -D -p $SSH_PORT -f "$SSHD_CONFIG" &
+# Start SSH server
+echo "🚀 Starting SSH server on port $SSH_PORT..."
+
+/usr/sbin/sshd -D -f "$SSHD_CONFIG" &
 SSH_PID=$!
 
 sleep 2
 
 if ! kill -0 $SSH_PID 2>/dev/null; then
-  echo "❌ SSH failed to start"
-  echo "Trying alternate startup..."
-  /usr/sbin/sshd -p $SSH_PORT || true
+  echo "❌ SSH failed to start - checking error..."
+  /usr/sbin/sshd -f "$SSHD_CONFIG" -t 2>&1 || true
   exit 1
 fi
 
 echo "✓ SSH server running (PID: $SSH_PID)"
-echo "  Config: $SSHD_CONFIG"
 echo "  Port: $SSH_PORT"
+echo "  Auth: Password (UsePAM disabled)"
+echo "  User: root (empty password accepted)"
 
 # Start OpenCode
 echo ""
@@ -114,14 +107,18 @@ echo ""
 echo "🌐 OpenCode:"
 echo "  Check Railway dashboard for URL"
 echo ""
-echo "🔑 SSH Terminal:"
-echo "  Config: $SSHD_CONFIG"
+echo "🔑 SSH Terminal (Bore Tunnel):"
 echo "  Port: $SSH_PORT"
-echo "  User: root"
-echo "  Auth: password"
+echo "  Username: root"
+echo "  Password: (empty - just press Enter)"
 echo ""
-echo "📋 Bore Tunnel (for remote access):"
-echo "  ./bore local --to bore.pub $SSH_PORT"
+echo "📋 How to connect:"
+echo "  1. Local: ./bore local --to bore.pub $SSH_PORT"
+echo "  2. Termius:"
+echo "     - Host: bore.pub"
+echo "     - Port: (from bore output)"
+echo "     - Username: root"
+echo "     - Password: (leave empty or press Enter)"
 echo ""
 
 wait
