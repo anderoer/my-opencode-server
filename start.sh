@@ -2,9 +2,14 @@
 
 set -e
 
+# Railway PORT variable
+PORT=${PORT:-2222}
+
 echo "========================================"
-echo "  OpenCode + Bore Tunnel Installer"
+echo "  OpenCode + Railway Proxy Setup"
 echo "========================================"
+echo "Port: $PORT"
+echo "Railway Mode: ${RAILWAY_ENVIRONMENT:-local}"
 echo ""
 
 # Download and setup bore if not exists
@@ -27,12 +32,12 @@ if ! command -v opencode >/dev/null 2>&1; then
 fi
 
 echo ""
-echo "🚀 Starting OpenCode Web Server (port 2222)..."
-opencode web --port 2222 &
+echo "🚀 Starting OpenCode Web Server (port $PORT)..."
+opencode web --port $PORT &
 OPENCODE_PID=$!
 echo "✓ OpenCode PID: $OPENCODE_PID"
 
-sleep 2
+sleep 3
 
 if ! kill -0 $OPENCODE_PID 2>/dev/null; then
   echo "❌ OpenCode failed to start"
@@ -40,10 +45,24 @@ if ! kill -0 $OPENCODE_PID 2>/dev/null; then
 fi
 
 echo ""
-echo "🌐 Starting Bore Tunnel to bore.pub..."
 echo "========================================"
+echo "  ✓ Services Running"
+echo "========================================"
+echo "OpenCode: http://localhost:$PORT"
 echo ""
 
-./bore local --to bore.pub 2222
+# Check if running on Railway
+if [ "$RAILWAY_ENVIRONMENT" = "production" ]; then
+  echo "🌐 Railway Proxy Active"
+  echo "Public URL: https://\$RAILWAY_PUBLIC_DOMAIN"
+  echo ""
+  echo "Optional: Create Bore tunnel for backup"
+  echo "./bore local --to bore.pub $PORT"
+  echo ""
+else
+  echo "🌐 Starting Bore Tunnel (local mode)..."
+  ./bore local --to bore.pub $PORT
+fi
 
+# Keep container running
 wait

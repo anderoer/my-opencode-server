@@ -5,7 +5,13 @@
   },
   "deploy": {
     "startCommand": "/app/start.sh",
-    "restartPolicyMaxRetries": 3,
-    "restartPolicyWindowMs": 60000
+    "restartPolicyMaxRetries": 5,
+    "restartPolicyWindowMs": 120000,
+    "healthchecks": {
+      "liveness": {
+        "initialDelaySeconds": 10,
+        "periodSeconds": 30
+      }
+    }
   }
 }
