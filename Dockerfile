@@ -16,8 +16,14 @@ RUN apt update && apt install -y \
     openssh-server \
     openssh-client
 
-# Install opencode globally
-RUN npm install -g opencode
+# Install Rust and build opencode from source
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && \
+    . $HOME/.cargo/env && \
+    git clone https://github.com/Xiaomi-mimc/opencode.git /opt/opencode && \
+    cd /opt/opencode && \
+    cargo build --release && \
+    ln -s /opt/opencode/target/release/opencode /usr/local/bin/opencode && \
+    rm -rf /opt/opencode/.git
 
 # Create tools directory
 RUN mkdir -p /tools && cd /tools
