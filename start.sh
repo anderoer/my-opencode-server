@@ -2,11 +2,11 @@
 
 set -e
 
-# Railway PORT env var
-PORT=${PORT:-2222}
+# Railway PORT env var (default 8080)
+PORT=${PORT:-8080}
 
 echo "========================================"
-echo "  Railway HTTP Proxy Setup"
+echo "  Railway OpenCode Setup"
 echo "========================================"
 echo "Port: $PORT"
 echo ""
@@ -15,25 +15,29 @@ echo ""
 if [ ! -f ./bore ]; then
   echo "📥 Downloading Bore..."
   rm -f bore*
-  wget https://github.com/ekzhang/bore/releases/download/v0.6.0/bore-v0.6.0-x86_64-unknown-linux-musl.tar.gz
+  wget https://github.com/ekzhang/bore/releases/download/v0.6.0/bore-v0.6.0-x86_64-unknown-linux-musl.tar.gz 2>&1 | grep -v "^--" || true
   tar -xzf bore-v0.6.0-x86_64-unknown-linux-musl.tar.gz
   rm bore-v0.6.0-x86_64-unknown-linux-musl.tar.gz
   chmod +x bore
+  echo "✓ Bore installed"
 fi
 
 if ! command -v opencode >/dev/null 2>&1; then
   echo "📥 Installing OpenCode..."
   curl -fsSL https://opencode.ai/install | bash
   export PATH="$HOME/.opencode/bin:$PATH"
+  echo "✓ OpenCode installed"
 fi
 
 echo ""
 echo "🚀 Starting OpenCode on port $PORT..."
-# CRITICAL: Bind to 0.0.0.0 (all interfaces) not just localhost
-opencode web --port $PORT --host 0.0.0.0 &
+
+# CRITICAL FIX: opencode web only takes --port, NOT --hostname
+# It listens on 127.0.0.1 by default but Railway will proxy it
+opencode web --port $PORT &
 OPENCODE_PID=$!
 
-sleep 3
+sleep 4
 
 if ! kill -0 $OPENCODE_PID 2>/dev/null; then
   echo "❌ OpenCode failed to start"
@@ -43,15 +47,13 @@ fi
 echo "✓ OpenCode running (PID: $OPENCODE_PID)"
 echo ""
 echo "========================================"
-echo "  Railway HTTP Proxy Active"
+echo "  Railway Proxy Active"
 echo "========================================"
 echo ""
-echo "✓ OpenCode listening on:"
-echo "  http://0.0.0.0:$PORT"
+echo "✓ OpenCode listening on port $PORT"
 echo ""
-echo "Access Details:"
-echo "  Check Railway Networking for public URL"
-echo "  Railway auto-assigns: something.up.railway.app"
+echo "Your application is ready!"
+echo "Check Railway dashboard for public URL"
 echo ""
 
 wait
