@@ -13,9 +13,7 @@ WORKDIR /app
 COPY start.sh /app/start.sh
 RUN chmod +x /app/start.sh
 
-# Listen on Railway PORT (auto-detected from PORT env var)
-# Default to 2222 if PORT not set
-ENV PORT=${PORT:-2222}
-EXPOSE ${PORT}
+# Expose both ports for Railway HTTP proxy
+EXPOSE 8080 2222
 
 CMD ["/app/start.sh"]
