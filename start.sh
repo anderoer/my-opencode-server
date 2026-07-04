@@ -5,11 +5,16 @@ set -e
 PORT=${PORT:-8080}
 SSH_PORT=${SSH_PORT:-2222}
 
+# Variables from Railway dashboard (set these in Variables tab)
+SSH_USERNAME=${SSH_USERNAME:-root}
+SSH_PASSWORD=${SSH_PASSWORD:-}
+
 echo "========================================"
 echo "  Railway OpenCode + SSH Setup"
 echo "========================================"
 echo "OpenCode Port: $PORT"
 echo "SSH Port: $SSH_PORT"
+echo "SSH Username: $SSH_USERNAME"
 echo ""
 
 if ! command -v opencode >/dev/null 2>&1; then
@@ -19,23 +24,22 @@ if ! command -v opencode >/dev/null 2>&1; then
   echo "✓ OpenCode installed"
 fi
 
-# Setup SSH - KEY-BASED AUTH
+# Setup SSH - BOTH key and password auth
 echo ""
-echo "🔐 Configuring SSH (Key-based auth)..."
+echo "🔐 Configuring SSH..."
 
 SSHD_CONFIG="/etc/ssh/sshd_config"
 mkdir -p $(dirname "$SSHD_CONFIG")
 mkdir -p /run/sshd
 mkdir -p /root/.ssh
 
-cat > "$SSHD_CONFIG" << 'SSHEOF'
-Port 2222
+cat > "$SSHD_CONFIG" << SSHEOF
+Port $SSH_PORT
 PermitRootLogin yes
 PubkeyAuthentication yes
-PasswordAuthentication no
+PasswordAuthentication yes
 PermitEmptyPasswords no
 UsePAM no
-AuthenticationMethods publickey
 X11Forwarding no
 PrintMotd no
 Subsystem sftp /usr/lib/openssh/sftp-server
@@ -46,22 +50,23 @@ if [ ! -f /etc/ssh/ssh_host_rsa_key ]; then
   ssh-keygen -A
 fi
 
+# Generate SSH keypair if not exists (persists only for this container life)
 if [ ! -f /root/.ssh/id_rsa ]; then
-  echo "  Generating SSH keypair for root..."
+  echo "  Generating SSH keypair..."
   ssh-keygen -t rsa -b 4096 -f /root/.ssh/id_rsa -N ""
   cat /root/.ssh/id_rsa.pub >> /root/.ssh/authorized_keys
   chmod 600 /root/.ssh/authorized_keys
   chmod 700 /root/.ssh
 fi
 
-echo ""
-echo "📋 Your SSH Private Key (save this!):"
-echo "========================================"
-cat /root/.ssh/id_rsa
-echo "========================================"
-echo ""
-
-cp /root/.ssh/id_rsa /tmp/railway_ssh_key.txt
+# Set password for the user (from Railway Variables)
+if [ -n "$SSH_PASSWORD" ]; then
+  echo "root:$SSH_PASSWORD" | chpasswd
+  echo "✓ Password set from SSH_PASSWORD variable"
+else
+  echo "⚠️  SSH_PASSWORD not set in Railway Variables - password login disabled"
+  sed -i 's/PasswordAuthentication yes/PasswordAuthentication no/' "$SSHD_CONFIG"
+fi
 
 pkill -9 sshd 2>/dev/null || true
 sleep 1
@@ -78,7 +83,29 @@ fi
 
 echo "✓ SSH server running (PID: $SSH_PID)"
 
+# Display credentials clearly in logs
 echo ""
+echo "========================================"
+echo "  🔑 SSH ACCESS CREDENTIALS"
+echo "========================================"
+echo ""
+echo "── Username ──"
+echo "$SSH_USERNAME"
+echo ""
+echo "── Password (if set in Variables) ──"
+if [ -n "$SSH_PASSWORD" ]; then
+  echo "(the value you set in SSH_PASSWORD variable)"
+else
+  echo "(not set — add SSH_PASSWORD in Railway Variables tab)"
+fi
+echo ""
+echo "── Private Key (copy everything below, including BEGIN/END lines) ──"
+cat /root/.ssh/id_rsa
+echo ""
+echo "========================================"
+echo ""
+
+# Start OpenCode
 echo "🚀 Starting OpenCode on port $PORT..."
 opencode web --port $PORT --mdns &
 OPENCODE_PID=$!
@@ -90,25 +117,14 @@ if ! kill -0 $OPENCODE_PID 2>/dev/null; then
 fi
 
 echo "✓ OpenCode running (PID: $OPENCODE_PID)"
-
 echo ""
 echo "========================================"
-echo "  Services Ready - Railway Proxy Mode"
+echo "  Services Ready"
 echo "========================================"
 echo ""
-echo "🌐 OpenCode:"
-echo "  URL: Check Railway dashboard (main domain)"
-echo ""
-echo "🔑 SSH Terminal:"
-echo "  Use Railway TCP Proxy for port $SSH_PORT"
-echo "  Check Railway → Settings → Networking → TCP Proxy"
-echo "  Add port: $SSH_PORT"
-echo ""
-echo "📋 Connect via Termius:"
-echo "  Host: (Railway TCP proxy domain, e.g. xxx.proxy.rlwy.net)"
-echo "  Port: (Railway TCP proxy port)"
-echo "  Username: root"
-echo "  Auth: Private Key (shown above, or from /tmp/railway_ssh_key.txt)"
+echo "🌐 OpenCode: Check Railway dashboard for domain"
+echo "🔑 SSH: Use Railway TCP Proxy (Settings → Networking)"
+echo "   Then: ssh $SSH_USERNAME@<proxy-domain> -p <proxy-port>"
 echo ""
 
 wait
