@@ -5,7 +5,6 @@ set -e
 OPENCODE_PORT=${PORT:-8080}
 SSH_PORT=2222
 
-# Safety: never let both ports collide
 if [ "$OPENCODE_PORT" = "$SSH_PORT" ]; then
   OPENCODE_PORT=8080
 fi
@@ -29,19 +28,17 @@ if ! command -v opencode >/dev/null 2>&1; then
   echo "✓ OpenCode installed"
 fi
 
-# Setup SSH - BOTH key and password auth
+# Setup SSH - PASSWORD AUTH ONLY
 echo ""
-echo "🔐 Configuring SSH..."
+echo "🔐 Configuring SSH (password auth)..."
 
 SSHD_CONFIG="/etc/ssh/sshd_config"
 mkdir -p $(dirname "$SSHD_CONFIG")
 mkdir -p /run/sshd
-mkdir -p /root/.ssh
 
 cat > "$SSHD_CONFIG" << SSHEOF
 Port $SSH_PORT
 PermitRootLogin yes
-PubkeyAuthentication yes
 PasswordAuthentication yes
 PermitEmptyPasswords no
 UsePAM no
@@ -55,22 +52,14 @@ if [ ! -f /etc/ssh/ssh_host_rsa_key ]; then
   ssh-keygen -A
 fi
 
-# Generate SSH keypair if not exists (persists only for this container life)
-if [ ! -f /root/.ssh/id_rsa ]; then
-  echo "  Generating SSH keypair..."
-  ssh-keygen -t rsa -b 4096 -f /root/.ssh/id_rsa -N ""
-  cat /root/.ssh/id_rsa.pub >> /root/.ssh/authorized_keys
-  chmod 600 /root/.ssh/authorized_keys
-  chmod 700 /root/.ssh
-fi
-
 # Set password for the user (from Railway Variables)
 if [ -n "$SSH_PASSWORD" ]; then
   echo "root:$SSH_PASSWORD" | chpasswd
   echo "✓ Password set from SSH_PASSWORD variable"
 else
-  echo "⚠️  SSH_PASSWORD not set in Railway Variables - password login disabled"
-  sed -i 's/PasswordAuthentication yes/PasswordAuthentication no/' "$SSHD_CONFIG"
+  echo "⚠️  SSH_PASSWORD not set in Railway Variables — using fallback password: changeme123"
+  echo "root:changeme123" | chpasswd
+  SSH_PASSWORD="changeme123"
 fi
 
 pkill -9 sshd 2>/dev/null || true
@@ -88,33 +77,18 @@ fi
 
 echo "✓ SSH server running (PID: $SSH_PID)"
 
-# Display credentials clearly in logs
-echo ""
-echo "========================================"
-echo "  🔑 SSH ACCESS CREDENTIALS"
-echo "========================================"
-echo ""
-echo "── Username ──"
-echo "$SSH_USERNAME"
-echo ""
-echo "── Password (if set in Variables) ──"
-if [ -n "$SSH_PASSWORD" ]; then
-  echo "(the value you set in SSH_PASSWORD variable)"
-else
-  echo "(not set — add SSH_PASSWORD in Railway Variables tab)"
-fi
-echo ""
-echo "── Private Key (copy everything below, including BEGIN/END lines) ──"
-cat /root/.ssh/id_rsa
-echo ""
-echo "========================================"
-echo ""
+# Use the SAME username/password for OpenCode's HTTP Basic Auth
+export OPENCODE_SERVER_USERNAME="$SSH_USERNAME"
+export OPENCODE_SERVER_PASSWORD="$SSH_PASSWORD"
 
-# Start OpenCode
-if [ -z "$OPENCODE_SERVER_PASSWORD" ]; then
-  export OPENCODE_SERVER_PASSWORD="${SSH_PASSWORD:-changeme123}"
-  echo "⚠️  OPENCODE_SERVER_PASSWORD not set — using fallback: $OPENCODE_SERVER_PASSWORD"
-fi
+echo ""
+echo "========================================"
+echo "  🔑 ACCESS CREDENTIALS (same for both)"
+echo "========================================"
+echo "Username: $SSH_USERNAME"
+echo "Password: $SSH_PASSWORD"
+echo "========================================"
+echo ""
 
 echo "🚀 Starting OpenCode on port $OPENCODE_PORT..."
 opencode web --port $OPENCODE_PORT --mdns &
@@ -133,8 +107,11 @@ echo "  Services Ready"
 echo "========================================"
 echo ""
 echo "🌐 OpenCode: Check Railway dashboard for domain"
+echo "   Login with Username/Password above"
+echo ""
 echo "🔑 SSH: Use Railway TCP Proxy (Settings → Networking)"
-echo "   Then: ssh $SSH_USERNAME@<proxy-domain> -p <proxy-port>"
+echo "   ssh $SSH_USERNAME@<proxy-domain> -p <proxy-port>"
+echo "   Login with same Password above"
 echo ""
 
 wait
