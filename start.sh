@@ -99,7 +99,22 @@ supervise_sshd() {
 # ---------- Supervisor loop for OpenCode ----------
 supervise_opencode() {
   while true; do
+    NEEDS_RESTART=0
+
     if ! pgrep -f "opencode web --port $OPENCODE_PORT" >/dev/null 2>&1; then
+      echo "$(date '+%Y-%m-%d %H:%M:%S') [watchdog] OpenCode process not found"
+      NEEDS_RESTART=1
+    else
+      # Process exists, but is it actually responding? (catches "zombie" hangs)
+      if ! curl -s -o /dev/null -m 5 -w "%{http_code}" "http://127.0.0.1:$OPENCODE_PORT" | grep -qE "^[23]|^401"; then
+        echo "$(date '+%Y-%m-%d %H:%M:%S') [watchdog] OpenCode process alive but NOT responding (hung) — killing it"
+        pkill -9 -f "opencode web --port $OPENCODE_PORT" 2>/dev/null
+        sleep 1
+        NEEDS_RESTART=1
+      fi
+    fi
+
+    if [ "$NEEDS_RESTART" = "1" ]; then
       echo "$(date '+%Y-%m-%d %H:%M:%S') [watchdog] Starting OpenCode..."
       opencode web --port $OPENCODE_PORT --mdns &
       sleep 3
@@ -109,6 +124,7 @@ supervise_opencode() {
         echo "$(date '+%Y-%m-%d %H:%M:%S') [watchdog] ❌ OpenCode failed to start, retrying in 5s"
       fi
     fi
+
     sleep 5
   done
 }
