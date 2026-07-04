@@ -2,8 +2,13 @@
 
 set -e
 
-PORT=${PORT:-8080}
-SSH_PORT=${SSH_PORT:-2222}
+OPENCODE_PORT=${PORT:-8080}
+SSH_PORT=2222
+
+# Safety: never let both ports collide
+if [ "$OPENCODE_PORT" = "$SSH_PORT" ]; then
+  OPENCODE_PORT=8080
+fi
 
 # Variables from Railway dashboard (set these in Variables tab)
 SSH_USERNAME=${SSH_USERNAME:-root}
@@ -12,7 +17,7 @@ SSH_PASSWORD=${SSH_PASSWORD:-}
 echo "========================================"
 echo "  Railway OpenCode + SSH Setup"
 echo "========================================"
-echo "OpenCode Port: $PORT"
+echo "OpenCode Port: $OPENCODE_PORT"
 echo "SSH Port: $SSH_PORT"
 echo "SSH Username: $SSH_USERNAME"
 echo ""
@@ -106,8 +111,13 @@ echo "========================================"
 echo ""
 
 # Start OpenCode
-echo "🚀 Starting OpenCode on port $PORT..."
-opencode web --port $PORT --mdns &
+if [ -z "$OPENCODE_SERVER_PASSWORD" ]; then
+  export OPENCODE_SERVER_PASSWORD="${SSH_PASSWORD:-changeme123}"
+  echo "⚠️  OPENCODE_SERVER_PASSWORD not set — using fallback: $OPENCODE_SERVER_PASSWORD"
+fi
+
+echo "🚀 Starting OpenCode on port $OPENCODE_PORT..."
+opencode web --port $OPENCODE_PORT --mdns &
 OPENCODE_PID=$!
 sleep 3
 
