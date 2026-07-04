@@ -3,35 +3,40 @@
 # NOTE: no 'set -e' here on purpose — this script must NEVER exit due to a
 # child process failing. It supervises services and restarts them forever.
 
-OPENCODE_PORT=${PORT:-8080}
+KILO_PORT=${PORT:-8080}
 SSH_PORT=2222
 
-if [ "$OPENCODE_PORT" = "$SSH_PORT" ]; then
-  OPENCODE_PORT=8080
+if [ "$KILO_PORT" = "$SSH_PORT" ]; then
+  KILO_PORT=8080
 fi
 
 SSH_USERNAME=${SSH_USERNAME:-root}
 SSH_PASSWORD=${SSH_PASSWORD:-}
 
 echo "========================================"
-echo "  Railway OpenCode + SSH Setup (Supervised)"
+echo "  Railway Kilo + SSH Setup (Supervised)"
 echo "========================================"
-echo "OpenCode Port: $OPENCODE_PORT"
+echo "Kilo Port: $KILO_PORT"
 echo "SSH Port: $SSH_PORT"
 echo "SSH Username: $SSH_USERNAME"
 echo ""
 
 # ---------- One-time installation ----------
 
-if ! command -v opencode >/dev/null 2>&1; then
-  echo "📥 Installing OpenCode..."
-  curl -fsSL https://opencode.ai/install | bash 2>&1 | grep -i "successfully" || true
-  export PATH="$HOME/.opencode/bin:$PATH"
-  echo "✓ OpenCode installed"
+if ! command -v kilo >/dev/null 2>&1; then
+  echo "📥 Installing Kilo..."
+  curl -fsSL https://kilo.ai/cli/install | bash 2>&1 | grep -i "successfully" || true
+  export PATH="$HOME/.kilo/bin:$PATH"
+  echo "✓ Kilo installed"
 fi
 
 echo ""
 echo "🔐 Configuring SSH (password auth)..."
+
+# Ensure Kilo's persistent data directory exists
+# (this should be the Railway Volume mount path so chat history survives redeploys)
+mkdir -p /root/.local/share/kilo
+echo "✓ Kilo data directory ready: /root/.local/share/kilo"
 
 SSHD_CONFIG="/etc/ssh/sshd_config"
 mkdir -p "$(dirname "$SSHD_CONFIG")"
@@ -62,8 +67,10 @@ else
   echo "⚠️  SSH_PASSWORD not set in Railway Variables — using fallback: $SSH_PASSWORD"
 fi
 
-export OPENCODE_SERVER_USERNAME="$SSH_USERNAME"
-export OPENCODE_SERVER_PASSWORD="$SSH_PASSWORD"
+# Kilo's own HTTP basic-auth env vars (mirrors OpenCode's naming convention;
+# if Kilo uses different var names, check `kilo web --help` / docs and adjust)
+export KILO_SERVER_USERNAME="$SSH_USERNAME"
+export KILO_SERVER_PASSWORD="$SSH_PASSWORD"
 
 echo ""
 echo "========================================"
@@ -96,32 +103,32 @@ supervise_sshd() {
   done
 }
 
-# ---------- Supervisor loop for OpenCode ----------
-supervise_opencode() {
+# ---------- Supervisor loop for Kilo ----------
+supervise_kilo() {
   while true; do
     NEEDS_RESTART=0
 
-    if ! pgrep -f "opencode web --port $OPENCODE_PORT" >/dev/null 2>&1; then
-      echo "$(date '+%Y-%m-%d %H:%M:%S') [watchdog] OpenCode process not found"
+    if ! pgrep -f "kilo web --port $KILO_PORT" >/dev/null 2>&1; then
+      echo "$(date '+%Y-%m-%d %H:%M:%S') [watchdog] Kilo process not found"
       NEEDS_RESTART=1
     else
       # Process exists, but is it actually responding? (catches "zombie" hangs)
-      if ! curl -s -o /dev/null -m 5 -w "%{http_code}" "http://127.0.0.1:$OPENCODE_PORT" | grep -qE "^[23]|^401"; then
-        echo "$(date '+%Y-%m-%d %H:%M:%S') [watchdog] OpenCode process alive but NOT responding (hung) — killing it"
-        pkill -9 -f "opencode web --port $OPENCODE_PORT" 2>/dev/null
+      if ! curl -s -o /dev/null -m 5 -w "%{http_code}" "http://127.0.0.1:$KILO_PORT" | grep -qE "^[23]|^401"; then
+        echo "$(date '+%Y-%m-%d %H:%M:%S') [watchdog] Kilo process alive but NOT responding (hung) — killing it"
+        pkill -9 -f "kilo web --port $KILO_PORT" 2>/dev/null
         sleep 1
         NEEDS_RESTART=1
       fi
     fi
 
     if [ "$NEEDS_RESTART" = "1" ]; then
-      echo "$(date '+%Y-%m-%d %H:%M:%S') [watchdog] Starting OpenCode..."
-      opencode web --port $OPENCODE_PORT --mdns &
+      echo "$(date '+%Y-%m-%d %H:%M:%S') [watchdog] Starting Kilo..."
+      kilo web --port $KILO_PORT --mdns &
       sleep 3
-      if pgrep -f "opencode web --port $OPENCODE_PORT" >/dev/null 2>&1; then
-        echo "$(date '+%Y-%m-%d %H:%M:%S') [watchdog] ✓ OpenCode is up"
+      if pgrep -f "kilo web --port $KILO_PORT" >/dev/null 2>&1; then
+        echo "$(date '+%Y-%m-%d %H:%M:%S') [watchdog] ✓ Kilo is up"
       else
-        echo "$(date '+%Y-%m-%d %H:%M:%S') [watchdog] ❌ OpenCode failed to start, retrying in 5s"
+        echo "$(date '+%Y-%m-%d %H:%M:%S') [watchdog] ❌ Kilo failed to start, retrying in 5s"
       fi
     fi
 
@@ -135,17 +142,17 @@ echo ""
 supervise_sshd &
 SUPERVISOR_SSH_PID=$!
 
-supervise_opencode &
-SUPERVISOR_OPENCODE_PID=$!
+supervise_kilo &
+SUPERVISOR_KILO_PID=$!
 
 echo "✓ Watchdog for SSH running (supervisor PID: $SUPERVISOR_SSH_PID)"
-echo "✓ Watchdog for OpenCode running (supervisor PID: $SUPERVISOR_OPENCODE_PID)"
+echo "✓ Watchdog for Kilo running (supervisor PID: $SUPERVISOR_KILO_PID)"
 echo ""
 echo "========================================"
 echo "  Services Self-Healing & Ready"
 echo "========================================"
 echo ""
-echo "🌐 OpenCode: Check Railway dashboard for domain"
+echo "🌐 Kilo: Check Railway dashboard for domain"
 echo "   Login: $SSH_USERNAME / $SSH_PASSWORD"
 echo ""
 echo "🔑 SSH: Use Railway TCP Proxy (Settings → Networking)"
@@ -164,10 +171,10 @@ while true; do
     supervise_sshd &
     SUPERVISOR_SSH_PID=$!
   fi
-  if ! kill -0 $SUPERVISOR_OPENCODE_PID 2>/dev/null; then
-    echo "$(date '+%Y-%m-%d %H:%M:%S') [watchdog] OpenCode supervisor died, restarting it..."
-    supervise_opencode &
-    SUPERVISOR_OPENCODE_PID=$!
+  if ! kill -0 $SUPERVISOR_KILO_PID 2>/dev/null; then
+    echo "$(date '+%Y-%m-%d %H:%M:%S') [watchdog] Kilo supervisor died, restarting it..."
+    supervise_kilo &
+    SUPERVISOR_KILO_PID=$!
   fi
   sleep 10
 done
