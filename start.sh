@@ -1,6 +1,7 @@
 #!/bin/bash
 
-set -e
+# NOTE: no 'set -e' here on purpose — this script must NEVER exit due to a
+# child process failing. It supervises services and restarts them forever.
 
 OPENCODE_PORT=${PORT:-8080}
 SSH_PORT=2222
@@ -9,17 +10,18 @@ if [ "$OPENCODE_PORT" = "$SSH_PORT" ]; then
   OPENCODE_PORT=8080
 fi
 
-# Variables from Railway dashboard (set these in Variables tab)
 SSH_USERNAME=${SSH_USERNAME:-root}
 SSH_PASSWORD=${SSH_PASSWORD:-}
 
 echo "========================================"
-echo "  Railway OpenCode + SSH Setup"
+echo "  Railway OpenCode + SSH Setup (Supervised)"
 echo "========================================"
 echo "OpenCode Port: $OPENCODE_PORT"
 echo "SSH Port: $SSH_PORT"
 echo "SSH Username: $SSH_USERNAME"
 echo ""
+
+# ---------- One-time installation ----------
 
 if ! command -v opencode >/dev/null 2>&1; then
   echo "📥 Installing OpenCode..."
@@ -28,12 +30,11 @@ if ! command -v opencode >/dev/null 2>&1; then
   echo "✓ OpenCode installed"
 fi
 
-# Setup SSH - PASSWORD AUTH ONLY
 echo ""
 echo "🔐 Configuring SSH (password auth)..."
 
 SSHD_CONFIG="/etc/ssh/sshd_config"
-mkdir -p $(dirname "$SSHD_CONFIG")
+mkdir -p "$(dirname "$SSHD_CONFIG")"
 mkdir -p /run/sshd
 
 cat > "$SSHD_CONFIG" << SSHEOF
@@ -52,32 +53,15 @@ if [ ! -f /etc/ssh/ssh_host_rsa_key ]; then
   ssh-keygen -A
 fi
 
-# Set password for the user (from Railway Variables)
 if [ -n "$SSH_PASSWORD" ]; then
   echo "root:$SSH_PASSWORD" | chpasswd
   echo "✓ Password set from SSH_PASSWORD variable"
 else
-  echo "⚠️  SSH_PASSWORD not set in Railway Variables — using fallback password: changeme123"
-  echo "root:changeme123" | chpasswd
   SSH_PASSWORD="changeme123"
+  echo "root:$SSH_PASSWORD" | chpasswd
+  echo "⚠️  SSH_PASSWORD not set in Railway Variables — using fallback: $SSH_PASSWORD"
 fi
 
-pkill -9 sshd 2>/dev/null || true
-sleep 1
-
-echo "🚀 Starting SSH server on port $SSH_PORT..."
-/usr/sbin/sshd -D -f "$SSHD_CONFIG" &
-SSH_PID=$!
-sleep 2
-
-if ! kill -0 $SSH_PID 2>/dev/null; then
-  echo "❌ SSH failed to start"
-  exit 1
-fi
-
-echo "✓ SSH server running (PID: $SSH_PID)"
-
-# Use the SAME username/password for OpenCode's HTTP Basic Auth
 export OPENCODE_SERVER_USERNAME="$SSH_USERNAME"
 export OPENCODE_SERVER_PASSWORD="$SSH_PASSWORD"
 
@@ -90,28 +74,84 @@ echo "Password: $SSH_PASSWORD"
 echo "========================================"
 echo ""
 
-echo "🚀 Starting OpenCode on port $OPENCODE_PORT..."
-opencode web --port $OPENCODE_PORT --mdns &
-OPENCODE_PID=$!
-sleep 3
+# Make config read-only so accidental edits from an interactive
+# terminal session can't break the supervised services.
+chmod 444 "$SSHD_CONFIG" 2>/dev/null || true
+chmod 555 "$0" 2>/dev/null || true
 
-if ! kill -0 $OPENCODE_PID 2>/dev/null; then
-  echo "❌ OpenCode failed to start"
-  exit 1
-fi
+# ---------- Supervisor loop for SSH ----------
+supervise_sshd() {
+  while true; do
+    if ! pgrep -f "/usr/sbin/sshd -D -f $SSHD_CONFIG" >/dev/null 2>&1; then
+      echo "$(date '+%Y-%m-%d %H:%M:%S') [watchdog] Starting sshd..."
+      /usr/sbin/sshd -D -f "$SSHD_CONFIG" &
+      sleep 2
+      if pgrep -f "/usr/sbin/sshd -D -f $SSHD_CONFIG" >/dev/null 2>&1; then
+        echo "$(date '+%Y-%m-%d %H:%M:%S') [watchdog] ✓ sshd is up"
+      else
+        echo "$(date '+%Y-%m-%d %H:%M:%S') [watchdog] ❌ sshd failed to start, retrying in 5s"
+      fi
+    fi
+    sleep 5
+  done
+}
 
-echo "✓ OpenCode running (PID: $OPENCODE_PID)"
+# ---------- Supervisor loop for OpenCode ----------
+supervise_opencode() {
+  while true; do
+    if ! pgrep -f "opencode web --port $OPENCODE_PORT" >/dev/null 2>&1; then
+      echo "$(date '+%Y-%m-%d %H:%M:%S') [watchdog] Starting OpenCode..."
+      opencode web --port $OPENCODE_PORT --mdns &
+      sleep 3
+      if pgrep -f "opencode web --port $OPENCODE_PORT" >/dev/null 2>&1; then
+        echo "$(date '+%Y-%m-%d %H:%M:%S') [watchdog] ✓ OpenCode is up"
+      else
+        echo "$(date '+%Y-%m-%d %H:%M:%S') [watchdog] ❌ OpenCode failed to start, retrying in 5s"
+      fi
+    fi
+    sleep 5
+  done
+}
+
+echo "🚀 Starting supervised services..."
+echo ""
+
+supervise_sshd &
+SUPERVISOR_SSH_PID=$!
+
+supervise_opencode &
+SUPERVISOR_OPENCODE_PID=$!
+
+echo "✓ Watchdog for SSH running (supervisor PID: $SUPERVISOR_SSH_PID)"
+echo "✓ Watchdog for OpenCode running (supervisor PID: $SUPERVISOR_OPENCODE_PID)"
 echo ""
 echo "========================================"
-echo "  Services Ready"
+echo "  Services Self-Healing & Ready"
 echo "========================================"
 echo ""
 echo "🌐 OpenCode: Check Railway dashboard for domain"
-echo "   Login with Username/Password above"
+echo "   Login: $SSH_USERNAME / $SSH_PASSWORD"
 echo ""
 echo "🔑 SSH: Use Railway TCP Proxy (Settings → Networking)"
 echo "   ssh $SSH_USERNAME@<proxy-domain> -p <proxy-port>"
-echo "   Login with same Password above"
+echo "   Login: $SSH_USERNAME / $SSH_PASSWORD"
+echo ""
+echo "ℹ️  If either service crashes or is killed manually,"
+echo "   it will be automatically restarted within ~5 seconds."
 echo ""
 
-wait
+# Keep the container alive forever, watching the supervisors.
+# If a supervisor loop itself dies (should never happen), restart it.
+while true; do
+  if ! kill -0 $SUPERVISOR_SSH_PID 2>/dev/null; then
+    echo "$(date '+%Y-%m-%d %H:%M:%S') [watchdog] SSH supervisor died, restarting it..."
+    supervise_sshd &
+    SUPERVISOR_SSH_PID=$!
+  fi
+  if ! kill -0 $SUPERVISOR_OPENCODE_PID 2>/dev/null; then
+    echo "$(date '+%Y-%m-%d %H:%M:%S') [watchdog] OpenCode supervisor died, restarting it..."
+    supervise_opencode &
+    SUPERVISOR_OPENCODE_PID=$!
+  fi
+  sleep 10
+done
